@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>密码验证</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="login-container">
+    <h2>请输入密码</h2>
+    <form id="passwordForm">
+      <input type="password" name="password" id="password" placeholder="输入密码" required>
+      <button type="submit">验证</button>
+    </form>
+    <div id="message"></div>
+  </div>
+  
+  <script>
+    document.getElementById('passwordForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const password = document.getElementById('password').value;
+      const messageElement = document.getElementById('message');
+      
+      try {
+        const response = await fetch('/api/verify_password', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ password }),
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          window.location.href = '/app.html'; // 重定向到应用页面
+        } else {
+          messageElement.innerHTML = `<p class="error">${data.message || '密码验证失败'}</p>`;
+        }
+      } catch (error) {
+        messageElement.innerHTML = '<p class="error">验证过程中发生错误</p>';
+      }
+    });
+  </script>
+</body>
+</html>
