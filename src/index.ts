@@ -7,6 +7,7 @@ interface CardKey {
 
 export interface Env {
   DB: D1Database;
+  ADMIN_PASSWORD: string; // 添加环境变量用于存储管理员密码
 }
 
 function handleOptions(request: Request) {
@@ -133,7 +134,13 @@ const adminHtml = `<!DOCTYPE html>
     </div>
 
     <script>
-        const API_URL = '/api'; // 根据实际部署情况调整API地址
+        // 检查是否已登录
+        const adminToken = localStorage.getItem('adminToken');
+        if (!adminToken) {
+            window.location.href = '/admin-login';
+        }
+        
+        const API_URL = '/api';
         
         // 页面加载完成后获取卡密数据
         document.addEventListener('DOMContentLoaded', fetchCardKeys);
@@ -143,6 +150,12 @@ const adminHtml = `<!DOCTYPE html>
         
         // 复制按钮点击事件
         document.getElementById('copyBtn').addEventListener('click', copyAllCards);
+        
+        // 退出登录按钮
+        document.getElementById('logoutBtn').addEventListener('click', function() {
+            localStorage.removeItem('adminToken');
+            window.location.href = '/admin-login';
+        });
         
         // 获取卡密数据
         async function fetchCardKeys() {
@@ -159,7 +172,19 @@ const adminHtml = `<!DOCTYPE html>
             statusEl.textContent = '';
             
             try {
-                const response = await fetch(API_URL);
+                const response = await fetch(API_URL, {
+                    headers: {
+                        'Authorization': \`Bearer \${adminToken}\`
+                    }
+                });
+                
+                if (response.status === 401) {
+                    // 未授权，返回登录页
+                    localStorage.removeItem('adminToken');
+                    window.location.href = '/admin-login';
+                    return;
+                }
+                
                 if (!response.ok) {
                     throw new Error(\`HTTP错误: \${response.status}\`);
                 }
@@ -236,16 +261,142 @@ const adminHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
+// 生成简单的 JWT token
+async function generateToken(password, secret) {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const payload = { 
+    admin: true,
+    exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24小时有效期
+  };
+  
+  const headerBase64 = btoa(JSON.stringify(header));
+  const payloadBase64 = btoa(JSON.stringify(payload));
+  
+  const dataToSign = `${headerBase64}.${payloadBase64}`;
+  const signature = await hmacSha256(dataToSign, secret);
+  
+  return `${headerBase64}.${payloadBase64}.${signature}`;
+}
+
+// 验证 token
+async function verifyToken(token, secret) {
+  try {
+    const [headerBase64, payloadBase64, signature] = token.split('.');
+    
+    // 验证签名
+    const dataToSign = `${headerBase64}.${payloadBase64}`;
+    const expectedSignature = await hmacSha256(dataToSign, secret);
+    
+    if (signature !== expectedSignature) {
+      return false;
+    }
+    
+    // 验证过期时间
+    const payload = JSON.parse(atob(payloadBase64));
+    const now = Math.floor(Date.now() / 1000);
+    
+    if (payload.exp && payload.exp < now) {
+      return false; // token 已过期
+    }
+    
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+// HMAC SHA-256 签名
+async function hmacSha256(message, key) {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(key);
+  const messageData = encoder.encode(message);
+  
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    cryptoKey,
+    messageData
+  );
+  
+  return Array.from(new Uint8Array(signature))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 export default {
   async fetch(request: Request, env: Env) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "*";
     const corsHeaders = {
       "Access-Control-Allow-Origin": origin,
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
       "Access-Control-Allow-Credentials": "true",
     };
+    
+    // 处理登录页面请求
+    if (url.pathname === "/admin-login") {
+      return new Response(loginHtml, {
+        headers: {
+          "Content-Type": "text/html;charset=UTF-8",
+          ...corsHeaders
+        }
+      });
+    }
+    
+    // 处理登录验证请求
+    if (url.pathname === "/admin-auth" && request.method === "POST") {
+      try {
+        const data = await request.json();
+        const { password } = data;
+        
+        // 验证密码是否正确
+        if (password === env.ADMIN_PASSWORD) {
+          // 生成 token
+          const token = await generateToken(password, env.ADMIN_PASSWORD);
+          
+          return new Response(JSON.stringify({
+            success: true,
+            message: "登录成功",
+            token
+          }), {
+            headers: {
+              "Content-Type": "application/json",
+              ...corsHeaders
+            }
+          });
+        } else {
+          return new Response(JSON.stringify({
+            success: false,
+            message: "密码错误"
+          }), {
+            status: 401,
+            headers: {
+              "Content-Type": "application/json",
+              ...corsHeaders
+            }
+          });
+        }
+      } catch (error) {
+        return new Response(JSON.stringify({
+          success: false,
+          message: "登录请求处理失败"
+        }), {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders
+          }
+        });
+      }
+    }
     
     // 处理 admin.html 请求
     if (url.pathname === "/admin" || url.pathname === "/admin.html") {
@@ -261,6 +412,37 @@ export default {
     if (url.pathname === "/api") {
       if (request.method === "OPTIONS") {
         return handleOptions(request);
+      }
+      
+      // 验证 Authorization 头
+      const authHeader = request.headers.get("Authorization");
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return new Response(JSON.stringify({
+          success: false,
+          message: "未授权访问"
+        }), {
+          status: 401,
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders
+          }
+        });
+      }
+      
+      const token = authHeader.split(" ")[1];
+      const isValidToken = await verifyToken(token, env.ADMIN_PASSWORD);
+      
+      if (!isValidToken) {
+        return new Response(JSON.stringify({
+          success: false,
+          message: "无效或过期的令牌"
+        }), {
+          status: 401,
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders
+          }
+        });
       }
       
       if (request.method !== "GET") {
