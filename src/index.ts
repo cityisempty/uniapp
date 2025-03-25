@@ -35,6 +35,121 @@ function handleOptions(request: Request) {
   }
 }
 
+// 修改 HTML 内容，添加登录页面
+const loginHtml = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理员登录</title>
+    <style>
+        body {
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            max-width: 400px;
+            margin: 100px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 24px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #1890ff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #40a9ff;
+        }
+        .error {
+            color: #f5222d;
+            margin-top: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>卡密管理系统登录</h1>
+        
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="password">管理员密码</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            
+            <button type="submit">登录</button>
+            
+            <div id="error" class="error" style="display: none;"></div>
+        </form>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('error');
+            
+            try {
+                const response = await fetch('/admin-auth', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // 登录成功，保存 token 并跳转
+                    localStorage.setItem('adminToken', data.token);
+                    window.location.href = '/admin';
+                } else {
+                    // 显示错误信息
+                    errorEl.textContent = data.message || '密码错误';
+                    errorEl.style.display = 'block';
+                }
+            } catch (error) {
+                errorEl.textContent = '登录请求失败，请重试';
+                errorEl.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>`;
+
 // 添加 HTML 内容
 const adminHtml = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -375,7 +490,7 @@ export default {
         } else {
           return new Response(JSON.stringify({
             success: false,
-            message: "密码错误!"
+            message: "密码错误"
           }), {
             status: 401,
             headers: {
